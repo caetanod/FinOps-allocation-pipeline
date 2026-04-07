@@ -301,6 +301,4 @@ A última etapa precisa evidenciar:
 
 ---
 
-## Licença
 
-Defina a licença conforme a política da sua empresa ou do repositório.
