@@ -128,7 +128,7 @@ config/reference/aks_system_namespaces.csv
 | `08_build_aks_allocation_from_opencost.ps1` | Share especializada de AKS | `gold/aks_allocation_share_opencost` |
 | `09_build_allocation_share_servicekey_final.ps1` | Consolidação das shares | `gold/allocation_share_servicekey_final` |
 | `10_build_fact_allocated_cost.ps1` | Fato final alocado + reconciliação | outputs finais de alocação |
-| `97_run_finops_allocation_pipeline_runbooK.ps1` | Orquestração do pipeline | execução ponta a ponta |
+| `99_run_finops_allocation_pipeline_runbooK.ps1` | Orquestração do pipeline | execução ponta a ponta |
 
 ---
 
