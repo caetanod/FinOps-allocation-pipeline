@@ -1,0 +1,199 @@
+<mxfile host="app.diagrams.net" modified="2026-04-07T13:00:00.000Z" agent="OpenAI" version="24.7.17">
+  <diagram id="finops-enterprise" name="FinOps Pipeline Enterprise">
+    <mxGraphModel dx="1800" dy="1100" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1920" pageHeight="1080" math="0" shadow="0">
+      <root>
+        <mxCell id="0"/>
+        <mxCell id="1" parent="0"/>
+
+        <!-- Title -->
+        <mxCell id="title" value="FinOps Allocation Pipeline Azure - Enterprise View" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=24;fontStyle=1;fontColor=#1F2937;" vertex="1" parent="1">
+          <mxGeometry x="40" y="20" width="620" height="30" as="geometry"/>
+        </mxCell>
+        <mxCell id="subtitle" value="Azure Automation Runbooks + Data Lake / Blob Storage + Specialized Allocation Tracks" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=12;fontColor=#4B5563;" vertex="1" parent="1">
+          <mxGeometry x="40" y="50" width="760" height="20" as="geometry"/>
+        </mxCell>
+
+        <!-- Swimlane Bronze -->
+        <mxCell id="lane_bronze" value="BRONZE - Ingestion" style="swimlane;html=1;rounded=1;startSize=28;horizontal=0;fillColor=#E8F1FB;strokeColor=#6C8EBF;fontStyle=1;fontSize=15;swimlaneLine=1;" vertex="1" parent="1">
+          <mxGeometry x="40" y="100" width="300" height="760" as="geometry"/>
+        </mxCell>
+
+        <!-- Swimlane Silver -->
+        <mxCell id="lane_silver" value="SILVER - Normalization, Mapping and Base Allocation" style="swimlane;html=1;rounded=1;startSize=28;horizontal=0;fillColor=#FFF6E5;strokeColor=#D6B656;fontStyle=1;fontSize=15;swimlaneLine=1;" vertex="1" parent="1">
+          <mxGeometry x="370" y="100" width="500" height="760" as="geometry"/>
+        </mxCell>
+
+        <!-- Swimlane Gold -->
+        <mxCell id="lane_gold" value="GOLD - Specialized Allocation and Consolidation" style="swimlane;html=1;rounded=1;startSize=28;horizontal=0;fillColor=#F3E8FF;strokeColor=#9673A6;fontStyle=1;fontSize=15;swimlaneLine=1;" vertex="1" parent="1">
+          <mxGeometry x="900" y="100" width="470" height="760" as="geometry"/>
+        </mxCell>
+
+        <!-- Swimlane Final -->
+        <mxCell id="lane_final" value="FINAL - Allocated Fact, Reconciliation and Controls" style="swimlane;html=1;rounded=1;startSize=28;horizontal=0;fillColor=#EAF7EA;strokeColor=#82B366;fontStyle=1;fontSize=15;swimlaneLine=1;" vertex="1" parent="1">
+          <mxGeometry x="1400" y="100" width="420" height="760" as="geometry"/>
+        </mxCell>
+
+        <!-- Bronze nodes -->
+        <mxCell id="inv" value="01 - Upload Inventory&#xa;Inventory Daily&#xa;&#xa;Output: bronze/inventory_daily" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#DAE8FC;strokeColor=#6C8EBF;fontSize=13;" vertex="1" parent="1">
+          <mxGeometry x="70" y="160" width="240" height="90" as="geometry"/>
+        </mxCell>
+        <mxCell id="cost_export" value="Azure Cost Export&#xa;CSV / recurring export&#xa;&#xa;Source for fact_cost" style="shape=parallelogram;perimeter=parallelogramPerimeter;whiteSpace=wrap;html=1;fillColor=#DAE8FC;strokeColor=#6C8EBF;fontSize=13;" vertex="1" parent="1">
+          <mxGeometry x="70" y="300" width="240" height="80" as="geometry"/>
+        </mxCell>
+        <mxCell id="ref_files" value="Reference Files&#xa;- opencost_clusters.csv&#xa;- clientes_alias.csv&#xa;- aks_system_namespaces.csv" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#DAE8FC;strokeColor=#6C8EBF;fontSize=13;" vertex="1" parent="1">
+          <mxGeometry x="70" y="430" width="240" height="100" as="geometry"/>
+        </mxCell>
+
+        <!-- Silver nodes -->
+        <mxCell id="fact_cost" value="02 - Build Fact Cost&#xa;Normalize raw billing export&#xa;&#xa;Key rule: UsageDate from file content&#xa;Output: silver/fact_cost" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFF2CC;strokeColor=#D6B656;fontSize=13;" vertex="1" parent="1">
+          <mxGeometry x="410" y="150" width="220" height="110" as="geometry"/>
+        </mxCell>
+        <mxCell id="date_logic" value="Date Logic&#xa;PipelineDate != UsageDate&#xa;&#xa;Avoid fixed D-1 assumptions" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FCE5CD;strokeColor=#D79B00;fontSize=13;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="660" y="150" width="170" height="110" as="geometry"/>
+        </mxCell>
+        <mxCell id="overrides" value="03 - Build Overrides RG Auto&#xa;Suggest Resource Group overrides&#xa;for shared resources" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFF2CC;strokeColor=#D6B656;fontSize=13;" vertex="1" parent="1">
+          <mxGeometry x="410" y="300" width="220" height="90" as="geometry"/>
+        </mxCell>
+        <mxCell id="r2s" value="04 - Build Resource to Service&#xa;ResourceId -&gt; ServiceKey&#xa;&#xa;Core classification layer&#xa;Output: silver/resource_to_service" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFF2CC;strokeColor=#D6B656;fontSize=13;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="410" y="430" width="220" height="110" as="geometry"/>
+        </mxCell>
+        <mxCell id="weights" value="05 - Build Client Weights&#xa;Dedicated cost as allocation basis&#xa;&#xa;Output: silver/client_weights_by_dedicated_cost" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFF2CC;strokeColor=#D6B656;fontSize=13;" vertex="1" parent="1">
+          <mxGeometry x="410" y="580" width="220" height="100" as="geometry"/>
+        </mxCell>
+        <mxCell id="share_base" value="06 - Build Allocation Share ServiceKey&#xa;Generic share for non-specialized services&#xa;&#xa;Output: silver/allocation_share_servicekey" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F8CECC;strokeColor=#B85450;fontSize=13;" vertex="1" parent="1">
+          <mxGeometry x="660" y="500" width="170" height="120" as="geometry"/>
+        </mxCell>
+        <mxCell id="audit_callout" value="Critical control point&#xa;Mapping quality directly affects&#xa;allocation accuracy and unallocated rate" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FDE9D9;strokeColor=#C27BA0;fontSize=12;dashed=1;" vertex="1" parent="1">
+          <mxGeometry x="640" y="660" width="210" height="90" as="geometry"/>
+        </mxCell>
+
+        <!-- Gold nodes -->
+        <mxCell id="sql_share" value="07 - SQL Pool Allocation Share&#xa;Technical metrics driven allocation&#xa;&#xa;Output: gold/sqlpool_allocation_share_metrics" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E1D5E7;strokeColor=#9673A6;fontSize=13;" vertex="1" parent="1">
+          <mxGeometry x="940" y="170" width="240" height="100" as="geometry"/>
+        </mxCell>
+        <mxCell id="aks_share" value="08 - AKS Allocation from OpenCost&#xa;Namespace / alias based allocation&#xa;System namespace handling&#xa;&#xa;Output: gold/aks_allocation_share_opencost" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E1D5E7;strokeColor=#9673A6;fontSize=13;" vertex="1" parent="1">
+          <mxGeometry x="940" y="330" width="240" height="120" as="geometry"/>
+        </mxCell>
+        <mxCell id="merge_share" value="09 - Final Allocation Share Consolidation&#xa;Merge generic + SQL + AKS shares&#xa;&#xa;Output: gold/allocation_share_servicekey_final" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#D5E8D4;strokeColor=#82B366;fontSize=13;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="1210" y="250" width="130" height="130" as="geometry"/>
+        </mxCell>
+        <mxCell id="normalize" value="V1 Control&#xa;Normalize by ServiceKey&#xa;Share sum = 1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FCE5CD;strokeColor=#D79B00;fontSize=12;dashed=1;" vertex="1" parent="1">
+          <mxGeometry x="1180" y="440" width="180" height="80" as="geometry"/>
+        </mxCell>
+
+        <!-- Final nodes -->
+        <mxCell id="fact_alloc" value="10 - Build Fact Allocated Cost&#xa;Apply final share to real cost&#xa;&#xa;Output: allocated fact + reconciliation + unallocated" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#D5E8D4;strokeColor=#82B366;fontSize=13;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="1450" y="230" width="230" height="120" as="geometry"/>
+        </mxCell>
+        <mxCell id="recon" value="Reconciliation&#xa;Allocated + Unallocated = Fact Cost&#xa;&#xa;Target V1: zero residual drift" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#EAF7EA;strokeColor=#82B366;fontSize=13;" vertex="1" parent="1">
+          <mxGeometry x="1450" y="400" width="230" height="90" as="geometry"/>
+        </mxCell>
+        <mxCell id="unalloc" value="Unallocated Output&#xa;Reasons and audit trail&#xa;&#xa;Examples: missing mapping / no share / ambiguous RG" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F8CECC;strokeColor=#B85450;fontSize=13;" vertex="1" parent="1">
+          <mxGeometry x="1450" y="540" width="230" height="100" as="geometry"/>
+        </mxCell>
+        <mxCell id="powerbi" value="Consumption Layer&#xa;Power BI / Executive Dashboards&#xa;Showback / Chargeback ready" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#D9EAD3;strokeColor=#6AA84F;fontSize=13;" vertex="1" parent="1">
+          <mxGeometry x="1450" y="690" width="230" height="100" as="geometry"/>
+        </mxCell>
+
+        <!-- Orchestration -->
+        <mxCell id="master" value="97 / 99 - Master Runbook&#xa;Orchestrates the full execution order&#xa;Logs status and failed step" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#D0E0E3;strokeColor=#76A5AF;fontSize=13;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="930" y="690" width="410" height="90" as="geometry"/>
+        </mxCell>
+
+        <!-- V1 enterprise side panel -->
+        <mxCell id="v1panel" value="V1 Hardening Recommendations&#xa;&#xa;• Reconciliation ledger by ServiceKey&#xa;• Unallocated classification taxonomy&#xa;• Rule versioning (JSON/YAML)&#xa;• Pipeline health / execution log&#xa;• Automated validation script" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F4F4F4;strokeColor=#666666;fontSize=13;align=left;spacingLeft=8;" vertex="1" parent="1">
+          <mxGeometry x="40" y="890" width="560" height="150" as="geometry"/>
+        </mxCell>
+        <mxCell id="legend" value="Legend&#xa;Blue = inputs / ingestion&#xa;Yellow = normalization and mapping&#xa;Red = generic allocation share&#xa;Purple = specialized allocation tracks&#xa;Green = final outputs and controls" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F4F4F4;strokeColor=#666666;fontSize=13;align=left;spacingLeft=8;" vertex="1" parent="1">
+          <mxGeometry x="630" y="890" width="420" height="150" as="geometry"/>
+        </mxCell>
+
+        <!-- Edges -->
+        <mxCell id="e_inv_r2s" edge="1" parent="1" source="inv" target="r2s" style="endArrow=block;strokeWidth=2;strokeColor=#6C8EBF;">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e_cost_fact" edge="1" parent="1" source="cost_export" target="fact_cost" style="endArrow=block;strokeWidth=2;strokeColor=#6C8EBF;">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e_fact_date" edge="1" parent="1" source="fact_cost" target="date_logic" style="endArrow=block;strokeWidth=2;strokeColor=#D79B00;dashed=1;">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e_fact_overrides" edge="1" parent="1" source="fact_cost" target="overrides" style="endArrow=block;strokeWidth=2;strokeColor=#D6B656;">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e_overrides_r2s" edge="1" parent="1" source="overrides" target="r2s" style="endArrow=block;strokeWidth=2;strokeColor=#D6B656;">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e_fact_weights" edge="1" parent="1" source="fact_cost" target="weights" style="endArrow=block;strokeWidth=2;strokeColor=#D6B656;">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e_r2s_share" edge="1" parent="1" source="r2s" target="share_base" style="endArrow=block;strokeWidth=2;strokeColor=#B85450;">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e_weights_share" edge="1" parent="1" source="weights" target="share_base" style="endArrow=block;strokeWidth=2;strokeColor=#B85450;">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e_ref_aks" edge="1" parent="1" source="ref_files" target="aks_share" style="endArrow=block;strokeWidth=2;strokeColor=#9673A6;">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e_fact_sql" edge="1" parent="1" source="fact_cost" target="sql_share" style="endArrow=block;strokeWidth=2;strokeColor=#9673A6;">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e_fact_aks" edge="1" parent="1" source="fact_cost" target="aks_share" style="endArrow=block;strokeWidth=2;strokeColor=#9673A6;">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e_share_merge" edge="1" parent="1" source="share_base" target="merge_share" style="endArrow=block;strokeWidth=2;strokeColor=#82B366;">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e_sql_merge" edge="1" parent="1" source="sql_share" target="merge_share" style="endArrow=block;strokeWidth=2;strokeColor=#82B366;">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e_aks_merge" edge="1" parent="1" source="aks_share" target="merge_share" style="endArrow=block;strokeWidth=2;strokeColor=#82B366;">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e_merge_norm" edge="1" parent="1" source="merge_share" target="normalize" style="endArrow=block;strokeWidth=2;strokeColor=#D79B00;dashed=1;">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e_merge_factalloc" edge="1" parent="1" source="merge_share" target="fact_alloc" style="endArrow=block;strokeWidth=2;strokeColor=#82B366;">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e_factcost_factalloc" edge="1" parent="1" source="fact_cost" target="fact_alloc" style="endArrow=block;strokeWidth=2;strokeColor=#82B366;">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="840" y="205"/>
+              <mxPoint x="1420" y="205"/>
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e_factalloc_recon" edge="1" parent="1" source="fact_alloc" target="recon" style="endArrow=block;strokeWidth=2;strokeColor=#82B366;">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e_factalloc_unalloc" edge="1" parent="1" source="fact_alloc" target="unalloc" style="endArrow=block;strokeWidth=2;strokeColor=#B85450;">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e_factalloc_powerbi" edge="1" parent="1" source="fact_alloc" target="powerbi" style="endArrow=block;strokeWidth=2;strokeColor=#6AA84F;">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1680" y="740"/>
+            </Array>
+          </mxGeometry>
+        </mxCell>
+
+        <!-- Master runbook dotted edges -->
+        <mxCell id="e_master_fact" edge="1" parent="1" source="master" target="fact_cost" style="endArrow=oval;dashed=1;strokeWidth=2;strokeColor=#76A5AF;">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e_master_r2s" edge="1" parent="1" source="master" target="r2s" style="endArrow=oval;dashed=1;strokeWidth=2;strokeColor=#76A5AF;">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e_master_aks" edge="1" parent="1" source="master" target="aks_share" style="endArrow=oval;dashed=1;strokeWidth=2;strokeColor=#76A5AF;">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e_master_factalloc" edge="1" parent="1" source="master" target="fact_alloc" style="endArrow=oval;dashed=1;strokeWidth=2;strokeColor=#76A5AF;">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>
