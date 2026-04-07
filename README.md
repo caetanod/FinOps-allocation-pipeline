@@ -1,5 +1,9 @@
 # FinOps Allocation Pipeline Azure
 
+![Azure](https://img.shields.io/badge/Azure-FinOps-blue)
+![PowerShell](https://img.shields.io/badge/PowerShell-Automation-darkblue)
+![Status](https://img.shields.io/badge/status-production-green)
+
 Pipeline de rateio de custos em Azure, construído em PowerShell, com execução via **Azure Automation Runbooks** e persistência em **Data Lake / Blob Storage**.
 
 ---
