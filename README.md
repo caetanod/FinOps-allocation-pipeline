@@ -107,7 +107,3 @@ finops-allocation-pipeline/
 ├── docs/
 └── config/
 
-
-![Azure](https://img.shields.io/badge/Azure-FinOps-blue)
-![PowerShell](https://img.shields.io/badge/PowerShell-Automation-darkblue)
-![Status](https://img.shields.io/badge/status-production-green)
