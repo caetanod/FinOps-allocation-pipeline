@@ -78,8 +78,10 @@ $TargetSubscriptions = @(
     "3f6d197f-f70b-4c2c-b981-8bb575d47a7a"
 )
 
-$script:ResolvedProcessingDate = $null
-$script:BrazilTimeZoneId = "E. South America Standard Time"
+Write-Host "📅 Date (entrada): $Date"
+Write-Host "📅 PipelineDate (entrada): $PipelineDate"
+Write-Host "📌 UseLatestInventoryFromLake: $UseLatestInventoryFromLake"
+Write-Host "📌 ExcludeNetworkWatcherRG: $ExcludeNetworkWatcherRG"
 
 # ==========================================
 # FUNÇÕES BASE
@@ -96,8 +98,22 @@ function Ensure-Folder {
 }
 
 function Get-BrazilNow {
-    $tz = [System.TimeZoneInfo]::FindSystemTimeZoneById($script:BrazilTimeZoneId)
-    return [System.TimeZoneInfo]::ConvertTimeFromUtc((Get-Date).ToUniversalTime(), $tz)
+    $tzIds = @(
+        "E. South America Standard Time",
+        "America/Sao_Paulo"
+    )
+
+    foreach ($tzId in $tzIds) {
+        try {
+            $tz = [System.TimeZoneInfo]::FindSystemTimeZoneById($tzId)
+            return [System.TimeZoneInfo]::ConvertTimeFromUtc((Get-Date).ToUniversalTime(), $tz)
+        }
+        catch {
+            continue
+        }
+    }
+
+    throw "Não foi possível resolver o timezone do Brasil (Windows/Linux)."
 }
 
 function Resolve-PreferredProcessingDate {
@@ -107,14 +123,14 @@ function Resolve-PreferredProcessingDate {
     )
 
     if (-not [string]::IsNullOrWhiteSpace($PipelineDate)) {
-        return ([datetime]::ParseExact($PipelineDate, 'yyyy-MM-dd', $null)).ToString('yyyy-MM-dd')
+        return $PipelineDate.Trim()
     }
 
     if (-not [string]::IsNullOrWhiteSpace($Date)) {
-        return ([datetime]::ParseExact($Date, 'yyyy-MM-dd', $null)).ToString('yyyy-MM-dd')
+        return $Date.Trim()
     }
 
-    return (Get-BrazilNow).ToString('yyyy-MM-dd')
+    return (Get-BrazilNow).ToString("yyyy-MM-dd")
 }
 
 function Get-DateCandidates {
@@ -125,17 +141,23 @@ function Get-DateCandidates {
         [int]$FallbackDays = 2
     )
 
-    $base = [datetime]::ParseExact($PreferredDate, 'yyyy-MM-dd', $null)
-    $list = New-Object System.Collections.Generic.List[string]
-
-    for ($i = 0; $i -le $FallbackDays; $i++) {
-        $candidate = $base.AddDays(-$i).ToString('yyyy-MM-dd')
-        if (-not $list.Contains($candidate)) {
-            $list.Add($candidate) | Out-Null
-        }
+    try {
+        $baseDate = [System.DateTime]::ParseExact(
+            $PreferredDate,
+            "yyyy-MM-dd",
+            [System.Globalization.CultureInfo]::InvariantCulture
+        )
+    }
+    catch {
+        throw "Data preferencial inválida: '$PreferredDate'. Use yyyy-MM-dd."
     }
 
-    return @($list.ToArray())
+    $dates = New-Object System.Collections.Generic.List[string]
+    for ($i = 0; $i -le $FallbackDays; $i++) {
+        $dates.Add($baseDate.AddDays(-$i).ToString("yyyy-MM-dd"))
+    }
+
+    return @($dates | Select-Object -Unique)
 }
 
 function Login-Azure {
@@ -223,72 +245,41 @@ function Download-Blob {
     return $outPath
 }
 
-function Get-LatestCsvBlobFromPrefix {
-    param(
-        [Parameter(Mandatory = $true)]$Ctx,
-        [Parameter(Mandatory = $true)][string]$Container,
-        [Parameter(Mandatory = $true)][string]$Prefix
-    )
-
-    $blobs = @(
-        Get-AzStorageBlob -Context $Ctx -Container $Container -Prefix $Prefix -ErrorAction Stop |
-        Where-Object { $_.Name -like '*.csv' }
-    )
-
-    if ($blobs.Count -eq 0) {
-        return $null
-    }
-
-    return (
-        $blobs |
-        Sort-Object { $_.ICloudBlob.Properties.LastModified } -Descending |
-        Select-Object -First 1
-    )
-}
-
 function Download-BlobByResolvedDatePrefix {
     param(
         [Parameter(Mandatory = $true)]$Ctx,
         [Parameter(Mandatory = $true)][string]$Container,
         [Parameter(Mandatory = $true)][string]$BasePrefix,
-        [Parameter(Mandatory = $true)][string]$PreferredDate,
+        [Parameter(Mandatory = $true)][string]$Dt,
         [Parameter(Mandatory = $true)][string]$Label,
-        [Parameter(Mandatory = $true)][string]$OutFolder,
-        [int]$FallbackDays = 2,
-        [bool]$UseFallback = $true
+        [Parameter(Mandatory = $true)][string]$OutFolder
     )
 
-    $datesToTry = if ($UseFallback) {
-        Get-DateCandidates -PreferredDate $PreferredDate -FallbackDays $FallbackDays
-    }
-    else {
-        @($PreferredDate)
-    }
+    $candidates = Get-DateCandidates -PreferredDate $Dt -FallbackDays 2
 
-    foreach ($dt in $datesToTry) {
-        $prefix = "$BasePrefix/dt=$dt/"
+    foreach ($candidate in $candidates) {
+        $prefix = "$BasePrefix/dt=$candidate/"
         Write-Host "🔎 Procurando '$Label' em '$Container/$prefix'..."
 
-        $blob = Get-LatestCsvBlobFromPrefix -Ctx $Ctx -Container $Container -Prefix $prefix
-        if ($null -ne $blob) {
+        $blobs = @(
+            Get-AzStorageBlob -Context $Ctx -Container $Container -Prefix $prefix -ErrorAction Stop |
+            Where-Object { $_.Name -like "*.csv" }
+        )
+
+        if ($blobs.Count -gt 0) {
+            $blob = $blobs |
+                Sort-Object { $_.ICloudBlob.Properties.LastModified } -Descending |
+                Select-Object -First 1
+
             Write-Host "📌 Blob encontrado ($Label): $($blob.Name)"
-            $localPath = Download-Blob -Ctx $Ctx -Container $Container -BlobName $blob.Name -OutFolder $OutFolder
-            return [PSCustomObject]@{
-                Date      = $dt
-                BlobName  = $blob.Name
-                LocalPath = $localPath
+            if ([string]::IsNullOrWhiteSpace($script:ResolvedProcessingDate)) {
+                $script:ResolvedProcessingDate = $candidate
             }
+            return (Download-Blob -Ctx $Ctx -Container $Container -BlobName $blob.Name -OutFolder $OutFolder)
         }
     }
 
-    $msg = if ($UseFallback) {
-        "Nenhum CSV encontrado para '$Label' em '$BasePrefix' usando as partições: $($datesToTry -join ', ')."
-    }
-    else {
-        "Nenhum CSV encontrado para '$Label' em '$BasePrefix/dt=$PreferredDate/'."
-    }
-
-    throw $msg
+    throw "Nenhum CSV encontrado para '$Label' em '$BasePrefix' considerando dt=$($candidates -join ', ')."
 }
 
 # ==========================================
@@ -440,6 +431,23 @@ function Resolve-AksClusterFromMcRg {
     }
 
     return $null
+}
+
+function Test-IsMcAksResource {
+    param($Row)
+
+    $rg = (Normalize-Text $Row.ResourceGroupName).ToLowerInvariant()
+    $type = Normalize-Text $Row.Type
+
+    if (-not [string]::IsNullOrWhiteSpace($rg) -and $rg.StartsWith("mc_", [System.StringComparison]::OrdinalIgnoreCase)) {
+        return $true
+    }
+
+    if ($type -eq "Microsoft.ContainerService/managedClusters") {
+        return $true
+    }
+
+    return $false
 }
 
 function Extract-FromResourceId {
@@ -615,7 +623,6 @@ function Try-ApplyRgOverride {
     return $null
 }
 
-
 # ==========================================
 # EXECUÇÃO
 # ==========================================
@@ -629,67 +636,40 @@ if (-not $ctx) {
 
 Write-Host "✅ Storage context carregado com sucesso."
 
-$preferredDate = Resolve-PreferredProcessingDate -Date $Date -PipelineDate $PipelineDate
-Write-Host "🕒 Brasil now...............: $((Get-BrazilNow).ToString('yyyy-MM-dd HH:mm:ss'))"
-Write-Host "📅 Preferred processing date: $preferredDate"
-Write-Host "📌 UseLatestInventoryFromLake: $UseLatestInventoryFromLake"
-Write-Host "📌 ExcludeNetworkWatcherRG: $ExcludeNetworkWatcherRG"
+$Date = Resolve-PreferredProcessingDate -Date $Date -PipelineDate $PipelineDate
+$script:ResolvedProcessingDate = $Date
+Write-Host "🗓️ Data preferencial do processamento: $Date"
 
 if ($UseLatestInventoryFromLake) {
-    $inventoryBlobInfo = Download-BlobByResolvedDatePrefix `
+    $InventoryCsvPath = Download-BlobByResolvedDatePrefix `
         -Ctx $ctx `
         -Container $FinopsContainer `
         -BasePrefix $InventoryPrefix `
-        -PreferredDate $preferredDate `
-        -Label 'inventory' `
-        -OutFolder $TempFolder `
-        -FallbackDays 2 `
-        -UseFallback $true
-
-    $InventoryCsvPath = $inventoryBlobInfo.LocalPath
-    $script:ResolvedProcessingDate = $inventoryBlobInfo.Date
-}
-else {
-    if ([string]::IsNullOrWhiteSpace($InventoryCsvPath) -or -not (Test-Path $InventoryCsvPath)) {
-        throw 'Inventário não encontrado. Passe -InventoryCsvPath ou use -UseLatestInventoryFromLake.'
-    }
-
-    if (-not [string]::IsNullOrWhiteSpace($Date)) {
-        $script:ResolvedProcessingDate = $Date
-    }
-    elseif (-not [string]::IsNullOrWhiteSpace($PipelineDate)) {
-        $script:ResolvedProcessingDate = $PipelineDate
-    }
-    else {
-        $script:ResolvedProcessingDate = $preferredDate
-    }
+        -Dt $Date `
+        -Label "inventory" `
+        -OutFolder $TempFolder
 }
 
-if ([string]::IsNullOrWhiteSpace($script:ResolvedProcessingDate)) {
-    throw 'Não foi possível resolver a data de processamento do Script 04.'
+if ([string]::IsNullOrWhiteSpace($InventoryCsvPath) -or -not (Test-Path $InventoryCsvPath)) {
+    throw "Inventário não encontrado. Passe -InventoryCsvPath ou use -UseLatestInventoryFromLake."
 }
-
-$Date = $script:ResolvedProcessingDate
-Write-Host "✅ Data efetiva do processamento (partição resolvida): $Date"
-Write-Host "📥 Inventário selecionado: $InventoryCsvPath"
 
 if ([string]::IsNullOrWhiteSpace($OverridesRgPath)) {
-    $overridesBlobInfo = Download-BlobByResolvedDatePrefix `
+    $OverridesRgPath = Download-BlobByResolvedDatePrefix `
         -Ctx $ctx `
         -Container $FinopsContainer `
         -BasePrefix $OverridesPrefix `
-        -PreferredDate $Date `
-        -Label 'overrides_rg' `
-        -OutFolder $TempFolder `
-        -FallbackDays 2 `
-        -UseFallback $true
-
-    $OverridesRgPath = $overridesBlobInfo.LocalPath
-    Write-Host "📥 Overrides selecionado: $OverridesRgPath (dt=$($overridesBlobInfo.Date))"
+        -Dt $Date `
+        -Label "overrides_rg" `
+        -OutFolder $TempFolder
 }
 
+if (-not [string]::IsNullOrWhiteSpace($script:ResolvedProcessingDate)) {
+    $Date = $script:ResolvedProcessingDate
+}
+Write-Host "🧭 Data efetiva resolvida para o processamento: $Date"
 Write-Host "📥 Lendo inventário: $InventoryCsvPath"
-$inv = @(Import-Csv -Path $InventoryCsvPath -Delimiter ';')
+$inv = @(Import-Csv -Path $InventoryCsvPath -Delimiter ";")
 if ($inv.Count -eq 0) {
     throw "Inventário vazio/não lido: $InventoryCsvPath"
 }
@@ -712,14 +692,14 @@ $mcRgFinopsClienteMap = Get-McRgFinopsClienteMap -InventoryRows $invUnique
 $invUnique | ForEach-Object {
     $finopsInfo = Get-EffectiveFinopsClienteInfo -Row $_ -McRgFinopsClienteMap $mcRgFinopsClienteMap
 
-    if ($_.PSObject.Properties.Name -contains 'EffectiveFinopsCliente') {
+    if ($_.PSObject.Properties.Name -contains "EffectiveFinopsCliente") {
         $_.EffectiveFinopsCliente = Normalize-Text $finopsInfo.EffectiveFinopsCliente
     }
     else {
         $_ | Add-Member -NotePropertyName EffectiveFinopsCliente -NotePropertyValue (Normalize-Text $finopsInfo.EffectiveFinopsCliente)
     }
 
-    if ($_.PSObject.Properties.Name -contains 'FinopsClienteSource') {
+    if ($_.PSObject.Properties.Name -contains "FinopsClienteSource") {
         $_.FinopsClienteSource = Normalize-Text $finopsInfo.FinopsClienteSource
     }
     else {
@@ -728,34 +708,50 @@ $invUnique | ForEach-Object {
 }
 
 $shared = @(
-    $invUnique | Where-Object { (Normalize-Text $_.EffectiveFinopsCliente) -eq 'COMPARTILHADO' }
+    $invUnique | Where-Object {
+        (Normalize-Text $_.EffectiveFinopsCliente) -eq "COMPARTILHADO" -or
+        (Test-IsMcAksResource -Row $_)
+    }
 )
 
 if ($ExcludeNetworkWatcherRG) {
     $shared = @(
-        $shared | Where-Object { $_.ResourceGroupName -ne 'networkwatcherrg' }
+        $shared | Where-Object { $_.ResourceGroupName -ne "networkwatcherrg" }
     )
 }
 
-Write-Host "🔎 Shared (EffectiveFinopsCliente=COMPARTILHADO): $($shared.Count) recursos"
+$shared = @(
+    $shared | Sort-Object ResourceId -Unique
+)
+
+$sharedTagged = @(
+    $shared | Where-Object { (Normalize-Text $_.EffectiveFinopsCliente) -eq "COMPARTILHADO" }
+).Count
+$sharedMcAks = @(
+    $shared | Where-Object { (Test-IsMcAksResource -Row $_) }
+).Count
+
+Write-Host "🔎 Recursos elegíveis para mapeamento: $($shared.Count)"
+Write-Host "   - Compartilhados por tag/cliente efetivo: $sharedTagged"
+Write-Host "   - AKS/MC_* incluídos por regra estrutural: $sharedMcAks"
 
 $vmNames = @{}
 $vmssNames = @{}
 
 @(
-    $shared | Where-Object { $_.Type -eq 'Microsoft.Compute/virtualMachines' }
+    $shared | Where-Object { $_.Type -eq "Microsoft.Compute/virtualMachines" }
 ) | ForEach-Object {
-    $vmNames[($_.Name + '').ToLowerInvariant()] = $true
+    $vmNames[($_.Name + "").ToLowerInvariant()] = $true
 }
 
 @(
-    $shared | Where-Object { $_.Type -eq 'Microsoft.Compute/virtualMachineScaleSets' }
+    $shared | Where-Object { $_.Type -eq "Microsoft.Compute/virtualMachineScaleSets" }
 ) | ForEach-Object {
-    $vmssNames[($_.Name + '').ToLowerInvariant()] = $true
+    $vmssNames[($_.Name + "").ToLowerInvariant()] = $true
 }
 
-function Exists-VM([string]$name)   { return $vmNames.ContainsKey(($name + '').ToLowerInvariant()) }
-function Exists-VMSS([string]$name) { return $vmssNames.ContainsKey(($name + '').ToLowerInvariant()) }
+function Exists-VM([string]$name)   { return $vmNames.ContainsKey(($name + "").ToLowerInvariant()) }
+function Exists-VMSS([string]$name) { return $vmssNames.ContainsKey(($name + "").ToLowerInvariant()) }
 
 $rgOverrides = @(Load-RgOverrides -path $OverridesRgPath)
 Write-Host "📌 Overrides RG carregados: $($rgOverrides.Count) ($OverridesRgPath)"
@@ -772,7 +768,7 @@ foreach ($r in $shared) {
     $svcType = $null
     $rule = $null
     $conf = 0
-    $notes = ''
+    $notes = ""
 
     $rgOv = Try-ApplyRgOverride -rgLower $rg -rgOverrides $rgOverrides
 
@@ -780,138 +776,138 @@ foreach ($r in $shared) {
     $aks = Resolve-AksClusterFromMcRg -rgLower $rg
     if ($aks -and (Test-IsAksInfraType -type $type)) {
         $svcKey = "AKS:$aks"
-        $svcType = 'AKS'
-        $rule = 'AKS_MC_RG_INFRA'
+        $svcType = "AKS"
+        $rule = "AKS_MC_RG_INFRA"
         $conf = 100
-        $notes = 'MC_RG infra mapped to AKS cluster'
+        $notes = "MC_RG infra mapped to AKS cluster (structural AKS rule)"
     }
     elseif ($aks) {
         $svcKey = "AKS:$aks"
-        $svcType = 'AKS'
-        $rule = 'AKS_MC_RG'
+        $svcType = "AKS"
+        $rule = "AKS_MC_RG"
         $conf = 95
-        $notes = 'MC_RG generic mapped to AKS cluster'
+        $notes = "MC_RG generic mapped to AKS cluster (structural AKS rule)"
     }
-    elseif ($type -eq 'Microsoft.ContainerService/managedClusters') {
+    elseif ($type -eq "Microsoft.ContainerService/managedClusters") {
         $svcKey = "AKS:$name"
-        $svcType = 'AKS'
-        $rule = 'AKS_MANAGEDCLUSTER'
+        $svcType = "AKS"
+        $rule = "AKS_MANAGEDCLUSTER"
         $conf = 100
     }
 
     # 2) SQL family
-    if (-not $svcKey -and $type -like 'Microsoft.Sql/servers/*') {
-        if ($type -eq 'Microsoft.Sql/servers/elasticpools') {
+    if (-not $svcKey -and $type -like "Microsoft.Sql/servers/*") {
+        if ($type -eq "Microsoft.Sql/servers/elasticpools") {
             $svcKey = "SQLPOOL:$name"
-            $svcType = 'SQLPOOL'
-            $rule = 'SQL_ELASTICPOOL'
+            $svcType = "SQLPOOL"
+            $rule = "SQL_ELASTICPOOL"
             $conf = 98
         }
-        elseif ($type -eq 'Microsoft.Sql/servers/databases') {
-            $pool = Extract-FromResourceId -rid $rid -marker '/elasticPools/'
+        elseif ($type -eq "Microsoft.Sql/servers/databases") {
+            $pool = Extract-FromResourceId -rid $rid -marker "/elasticPools/"
             if ($pool) {
                 $svcKey = "SQLPOOL:$pool"
-                $svcType = 'SQLPOOL'
-                $rule = 'SQLDB_IN_POOL'
+                $svcType = "SQLPOOL"
+                $rule = "SQLDB_IN_POOL"
                 $conf = 96
             }
             else {
                 $svcKey = "SQLDB:$name"
-                $svcType = 'SQLDB'
-                $rule = 'SQLDB_STANDALONE'
+                $svcType = "SQLDB"
+                $rule = "SQLDB_STANDALONE"
                 $conf = 92
             }
         }
         else {
-            $server = ($name.Split('/'))[0]
+            $server = ($name.Split("/"))[0]
             if ($server) {
                 $svcKey = "SQL:$server"
-                $svcType = 'SQL'
-                $rule = 'SQL_FAMILY_FALLBACK'
+                $svcType = "SQL"
+                $rule = "SQL_FAMILY_FALLBACK"
                 $conf = 80
-                $notes = 'Faltou regra específica para este sub-type SQL.'
+                $notes = "Faltou regra específica para este sub-type SQL."
             }
         }
     }
 
     # 3) Shared backup RG
     if (-not $svcKey -and (Test-IsSharedBackupRg -rg $rg)) {
-        $svcKey = 'BACKUP:shared-datadisk-eu-prd'
-        $svcType = 'BACKUP'
-        $rule = 'SHARED_BACKUP_RG'
+        $svcKey = "BACKUP:shared-datadisk-eu-prd"
+        $svcType = "BACKUP"
+        $rule = "SHARED_BACKUP_RG"
         $conf = 100
-        $notes = 'Shared backup RG mapped to global allocation'
+        $notes = "Shared backup RG mapped to global allocation"
     }
 
     # 4) Direct shared service types
     if (-not $svcKey) {
         switch ($type) {
-            'Microsoft.Cache/Redis'                     { $svcKey="REDIS:$name"; $svcType='REDIS'; $rule='REDIS'; $conf=95; break }
-            'Microsoft.OperationalInsights/workspaces' { $svcKey="LAW:$name";   $svcType='LAW';   $rule='LAW';   $conf=95; break }
-            'Microsoft.Network/applicationGateways'    { $svcKey="APPGW:$name"; $svcType='APPGW'; $rule='APPGW'; $conf=95; break }
-            'Microsoft.Network/loadBalancers'          { $svcKey="LB:$name";    $svcType='LB';    $rule='LB';    $conf=95; break }
-            'Microsoft.Storage/storageAccounts'        { $svcKey="STG:$name";   $svcType='STORAGE'; $rule='STORAGE'; $conf=95; break }
-            'Microsoft.KeyVault/vaults'                { $svcKey="KV:$name";    $svcType='KEYVAULT'; $rule='KEYVAULT'; $conf=95; break }
-            'Microsoft.ServiceBus/namespaces'          { $svcKey="SB:$name";    $svcType='SERVICEBUS'; $rule='SERVICEBUS'; $conf=95; break }
-            'Microsoft.RecoveryServices/vaults'        { $svcKey="RSV:$name";   $svcType='RECOVERYVAULT'; $rule='RECOVERYVAULT'; $conf=90; break }
+            "Microsoft.Cache/Redis"                     { $svcKey="REDIS:$name"; $svcType="REDIS"; $rule="REDIS"; $conf=95; break }
+            "Microsoft.OperationalInsights/workspaces" { $svcKey="LAW:$name";   $svcType="LAW";   $rule="LAW";   $conf=95; break }
+            "Microsoft.Network/applicationGateways"    { $svcKey="APPGW:$name"; $svcType="APPGW"; $rule="APPGW"; $conf=95; break }
+            "Microsoft.Network/loadBalancers"          { $svcKey="LB:$name";    $svcType="LB";    $rule="LB";    $conf=95; break }
+            "Microsoft.Storage/storageAccounts"        { $svcKey="STG:$name";   $svcType="STORAGE"; $rule="STORAGE"; $conf=95; break }
+            "Microsoft.KeyVault/vaults"                { $svcKey="KV:$name";    $svcType="KEYVAULT"; $rule="KEYVAULT"; $conf=95; break }
+            "Microsoft.ServiceBus/namespaces"          { $svcKey="SB:$name";    $svcType="SERVICEBUS"; $rule="SERVICEBUS"; $conf=95; break }
+            "Microsoft.RecoveryServices/vaults"        { $svcKey="RSV:$name";   $svcType="RECOVERYVAULT"; $rule="RECOVERYVAULT"; $conf=90; break }
             default { }
         }
     }
 
     # 5) VM / VMSS heuristics
     if (-not $svcKey) {
-        if ($type -eq 'Microsoft.Compute/virtualMachines') {
-            $svcKey="VM:$name"; $svcType='VM'; $rule='VM_DIRECT'; $conf=95
+        if ($type -eq "Microsoft.Compute/virtualMachines") {
+            $svcKey="VM:$name"; $svcType="VM"; $rule="VM_DIRECT"; $conf=95
         }
-        elseif ($type -eq 'Microsoft.Compute/virtualMachineScaleSets') {
-            $svcKey="VMSS:$name"; $svcType='VMSS'; $rule='VMSS_DIRECT'; $conf=95
+        elseif ($type -eq "Microsoft.Compute/virtualMachineScaleSets") {
+            $svcKey="VMSS:$name"; $svcType="VMSS"; $rule="VMSS_DIRECT"; $conf=95
         }
-        elseif ($type -eq 'Microsoft.Compute/virtualMachines/extensions') {
-            $vm = Extract-FromResourceId -rid $rid -marker '/virtualMachines/'
+        elseif ($type -eq "Microsoft.Compute/virtualMachines/extensions") {
+            $vm = Extract-FromResourceId -rid $rid -marker "/virtualMachines/"
             if ($vm -and (Exists-VM $vm)) {
-                $svcKey="VM:$vm"; $svcType='VM'; $rule='VM_EXTENSION_PARENT'; $conf=92
+                $svcKey="VM:$vm"; $svcType="VM"; $rule="VM_EXTENSION_PARENT"; $conf=92
             }
         }
-        elseif ($type -eq 'Microsoft.Network/networkInterfaces') {
+        elseif ($type -eq "Microsoft.Network/networkInterfaces") {
             $vmGuess = Guess-ParentFromNicName -nicName $name
             if ($vmGuess -and (Exists-VM $vmGuess)) {
-                $svcKey="VM:$vmGuess"; $svcType='VM'; $rule='NIC_TO_VM_NAME_VALIDATED'; $conf=80
+                $svcKey="VM:$vmGuess"; $svcType="VM"; $rule="NIC_TO_VM_NAME_VALIDATED"; $conf=80
             }
             elseif ($vmGuess -and (Exists-VMSS $vmGuess)) {
-                $svcKey="VMSS:$vmGuess"; $svcType='VMSS'; $rule='NIC_TO_VMSS_NAME_VALIDATED'; $conf=75
+                $svcKey="VMSS:$vmGuess"; $svcType="VMSS"; $rule="NIC_TO_VMSS_NAME_VALIDATED"; $conf=75
             }
         }
-        elseif ($type -eq 'Microsoft.Compute/disks') {
+        elseif ($type -eq "Microsoft.Compute/disks") {
             $vmFromDisk = Guess-ParentVmFromDiskName -diskName $name
             if ($vmFromDisk -and (Exists-VM $vmFromDisk)) {
-                $svcKey="VM:$vmFromDisk"; $svcType='VM'; $rule='DISK_TO_VM_NAME_VALIDATED'; $conf=82
+                $svcKey="VM:$vmFromDisk"; $svcType="VM"; $rule="DISK_TO_VM_NAME_VALIDATED"; $conf=82
             }
             elseif ($vmFromDisk -and (Exists-VMSS $vmFromDisk)) {
-                $svcKey="VMSS:$vmFromDisk"; $svcType='VMSS'; $rule='DISK_TO_VMSS_NAME_VALIDATED'; $conf=75
+                $svcKey="VMSS:$vmFromDisk"; $svcType="VMSS"; $rule="DISK_TO_VMSS_NAME_VALIDATED"; $conf=75
             }
         }
     }
 
     # 6) RG override or generic infra fallback
     if (-not $svcKey) {
-        if ($rgOv -and (($rgOv.ServiceKey + '').Trim() -eq 'EXCLUDE')) { continue }
+        if ($rgOv -and (($rgOv.ServiceKey + "").Trim() -eq "EXCLUDE")) { continue }
 
         if ($rgOv -and -not [string]::IsNullOrWhiteSpace((Normalize-Text $rgOv.ServiceKey))) {
             $svcKey  = Normalize-Text $rgOv.ServiceKey
-            $svcType = if ([string]::IsNullOrWhiteSpace((Normalize-Text $rgOv.ServiceType))) { 'INFRA' } else { (Normalize-Text $rgOv.ServiceType) }
-            $rule    = 'OVERRIDE_RG'
+            $svcType = if ([string]::IsNullOrWhiteSpace((Normalize-Text $rgOv.ServiceType))) { "INFRA" } else { (Normalize-Text $rgOv.ServiceType) }
+            $rule    = "OVERRIDE_RG"
             $conf    = 99
             $notes   = "RG override (pattern=$($rgOv.Pattern)). $(Normalize-Text $rgOv.Notes)"
         }
         else {
-            if ($type -like 'Microsoft.Network/*' -or $type -eq 'Microsoft.Network/privateDnsZones') {
-                $svcKey='INFRA:SHARED-NETWORK'; $svcType='INFRA'; $rule='INFRA_NETWORK'; $conf=70
+            if ($type -like "Microsoft.Network/*" -or $type -eq "Microsoft.Network/privateDnsZones") {
+                $svcKey="INFRA:SHARED-NETWORK"; $svcType="INFRA"; $rule="INFRA_NETWORK"; $conf=70
             }
-            elseif ($type -like 'Microsoft.ManagedIdentity/*') {
-                $svcKey='INFRA:SHARED-IDENTITY'; $svcType='INFRA'; $rule='INFRA_IDENTITY'; $conf=70
+            elseif ($type -like "Microsoft.ManagedIdentity/*") {
+                $svcKey="INFRA:SHARED-IDENTITY"; $svcType="INFRA"; $rule="INFRA_IDENTITY"; $conf=70
             }
             else {
-                $svcKey='INFRA:SHARED'; $svcType='INFRA'; $rule='INFRA_SHARED_FALLBACK'; $conf=60
+                $svcKey="INFRA:SHARED"; $svcType="INFRA"; $rule="INFRA_SHARED_FALLBACK"; $conf=60
             }
         }
     }
@@ -920,29 +916,29 @@ foreach ($r in $shared) {
 }
 
 $outLocal = Join-Path $TempFolder ("resource_to_service_shared_{0}.csv" -f $Date)
-@($rows.ToArray()) | Export-Csv -Path $outLocal -NoTypeInformation -Delimiter ';' -Encoding UTF8
+@($rows.ToArray()) | Export-Csv -Path $outLocal -NoTypeInformation -Delimiter ";" -Encoding UTF8
 Write-Host "✅ resource_to_service_shared gerado: $outLocal"
 
 $candidates = @(
     @($rows.ToArray()) |
-    Where-Object { $_.Confidence -lt 75 -or $_.ServiceKey -like 'INFRA:*' } |
+    Where-Object { $_.Confidence -lt 75 -or $_.ServiceKey -like "INFRA:*" } |
     Group-Object ResourceGroupName, ResourceType |
     Sort-Object Count -Descending |
     Select-Object -First 300 |
     ForEach-Object {
-        $parts = $_.Name.Split(',')
+        $parts = $_.Name.Split(",")
         [PSCustomObject]@{
             ResourceGroupName   = $parts[0].Trim()
             ResourceType        = $parts[1].Trim()
             Count               = $_.Count
-            SuggestedServiceKey = ''
-            Notes               = 'Se precisar granularidade, defina SuggestedServiceKey'
+            SuggestedServiceKey = ""
+            Notes               = "Se precisar granularidade, defina SuggestedServiceKey"
         }
     }
 )
 
 $outCandLocal = Join-Path $TempFolder ("override_candidates_shared_{0}.csv" -f $Date)
-$candidates | Export-Csv -Path $outCandLocal -NoTypeInformation -Delimiter ';' -Encoding UTF8
+$candidates | Export-Csv -Path $outCandLocal -NoTypeInformation -Delimiter ";" -Encoding UTF8
 Write-Host "✅ override_candidates_shared gerado: $outCandLocal"
 
 $blobMap  = "$ResourceToServicePrefix/dt=$Date/$(Split-Path $outLocal -Leaf)"
@@ -967,3 +963,21 @@ $low = @(
     $rowsArray | Where-Object { $_.Confidence -lt 75 }
 ).Count
 Write-Host "`n⚠️ Low-confidence (shared): $low de $($rowsArray.Count)"
+
+$ovCount = @(
+    $rowsArray | Where-Object { $_.Rule -eq "OVERRIDE_RG" }
+).Count
+Write-Host "`n✅ OVERRIDE_RG applied: $ovCount"
+
+if ($ovCount -gt 0) {
+    Write-Host "`nTop overrides (ServiceKey):"
+    @(
+        $rowsArray |
+        Where-Object { $_.Rule -eq "OVERRIDE_RG" } |
+        Group-Object ServiceKey |
+        Sort-Object Count -Descending |
+        Select-Object -First 10
+    ) | ForEach-Object {
+        Write-Host ("- {0}: {1}" -f $_.Name, $_.Count)
+    }
+}

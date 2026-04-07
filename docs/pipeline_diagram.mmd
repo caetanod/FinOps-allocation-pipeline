@@ -1,54 +1,56 @@
-flowchart TD
-    A97["97_run_finops_allocation_pipeline_runbooK.ps1<br/>Runbook maestro / orquestração"] --> A01["01_upload_inventory.ps1<br/>Ingestão do inventário"]
-    A97 --> A02["02_build_fact_cost.ps1<br/>Normaliza custo exportado"]
-    A97 --> A03["03_build_overrides_rg_auto.ps1<br/>Sugere overrides por RG"]
-    A97 --> A04["04_build_resource_to_service.ps1<br/>Mapeia ResourceId -> ServiceKey"]
-    A97 --> A05["05_build_client_weights_by_dedicated_cost.ps1<br/>Calcula pesos por cliente"]
-    A97 --> A06["06_build_allocation_share_servicekey_runbook.ps1<br/>Rateio genérico por ServiceKey"]
-    A97 --> A07["07_build_sqlpool_allocation_share_from_metrics.ps1<br/>Rateio especializado SQL Pool"]
-    A97 --> A08["08_build_aks_allocation_from_opencost.ps1<br/>Rateio especializado AKS"]
-    A97 --> A09["09_build_allocation_share_servicekey_final.ps1<br/>Consolida shares finais"]
-    A97 --> A10["10_build_fact_allocated_cost.ps1<br/>Gera custo alocado e reconciliação"]
+flowchart LR
+%% =========================================
+%% FINOPS ALLOCATION PIPELINE - FINAL VERSION
+%% =========================================
 
-    INV["bronze/inventory_daily"] --> A03
-    INV --> A04
-    INV --> A05
-    INV --> A07
-    INV --> A10
+%% ===== INPUT =====
+subgraph INPUT [🔵 INPUT - Dados de Origem]
+    A[Inventory Daily]
+    B[Arquivos Auxiliares\n(cluster, aks, sistemas)]
+end
 
-    COST["silver/fact_cost"] --> A05
-    COST --> A06
-    COST --> A07
-    COST --> A08
-    COST --> A10
+%% ===== PREPARAÇÃO =====
+subgraph PREP [🟡 PREPARAÇÃO & ENRIQUECIMENTO]
+    C[Build Fact Cost\n(normalização de custos)]
+    D[Overrides RG / Ajustes]
+    E[Resource → ServiceKey\n(mapeamento)]
+    F[Client Weights\n(pesos por cliente)]
+end
 
-    A03 --> OVR["overrides RG / candidatos"]
-    OVR --> A04
+%% ===== RATEIO =====
+subgraph ALLOC [🔴 ENGINE DE RATEIO]
+    G[Rateio Genérico\n(ServiceKey)]
+    H[Rateio SQL Pool]
+    I[Rateio AKS\n(OpenCost)]
+    J[Consolidação Final\n(merge dos shares)]
+end
 
-    A04 --> RTS["silver/resource_to_service"]
-    RTS --> A06
-    RTS --> A07
-    RTS --> A08
-    RTS --> A10
+%% ===== OUTPUT =====
+subgraph OUTPUT [🟢 OUTPUT - Dados Finais]
+    K[Allocated Cost\n(custo final alocado)]
+    L[Métricas / Share]
+    M[Unallocated\n(custos não atribuídos)]
+end
 
-    A05 --> WGT["silver/client_weights_by_dedicated_cost"]
-    WGT --> A06
+%% ===== FLOW PRINCIPAL =====
+A --> C
+B --> D
 
-    A06 --> BASE["silver/allocation_share_servicekey"]
-    A07 --> SQL["gold/sqlpool_allocation_share_metrics"]
-    A08 --> AKS["gold/aks_allocation_share_opencost"]
+C --> G
+D --> G
+E --> G
+F --> G
 
-    BASE --> A09
-    SQL --> A09
-    AKS --> A09
+%% Especializações
+G --> H
+G --> I
 
-    REF["config/reference<br/>opencost_clusters.csv<br/>clientes_alias.csv<br/>aks_system_namespaces.csv"] --> A08
+%% Consolidação
+G --> J
+H --> J
+I --> J
 
-    A09 --> FINAL["gold/allocation_share_servicekey_final"]
-    FINAL --> A10
-
-    A10 --> OUT1["fact_allocated_cost"]
-    A10 --> OUT2["final_cost_by_client"]
-    A10 --> OUT3["final_cost_detailed"]
-    A10 --> OUT4["reconciliation"]
-    A10 --> OUT5["unallocated_cost"]
+%% Saída
+J --> K
+J --> L
+J --> M

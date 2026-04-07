@@ -272,6 +272,74 @@ function Format-DoubleInvariant {
   return $Value.ToString("F6", [System.Globalization.CultureInfo]::InvariantCulture)
 }
 
+function Normalize-ShareRowsByServiceKey {
+  param(
+    [Parameter(Mandatory = $true)]
+    [object[]]$Rows
+  )
+
+  if ($null -eq $Rows -or $Rows.Count -eq 0) {
+    return @()
+  }
+
+  $normalized = New-Object System.Collections.ArrayList
+
+  $groups = @(
+    $Rows |
+    Group-Object -Property Date, ServiceKey
+  )
+
+  foreach ($g in $groups) {
+    $items = @($g.Group)
+    if ($items.Count -eq 0) { continue }
+
+    [double]$sum = 0.0
+    foreach ($item in $items) {
+      $sum += [double]$item.Share
+    }
+
+    if ($sum -le 0) {
+      foreach ($item in $items) {
+        [void]$normalized.Add($item)
+      }
+      continue
+    }
+
+    $work = @()
+    foreach ($item in $items) {
+      $newItem = [PSCustomObject]@{
+        Date           = $item.Date
+        ServiceKey     = $item.ServiceKey
+        Cliente        = $item.Cliente
+        Share          = [Math]::Round(([double]$item.Share / $sum), 6)
+        DriverType     = $item.DriverType
+        AllocationMode = $item.AllocationMode
+        Notes          = $item.Notes
+      }
+      $work += $newItem
+    }
+
+    [double]$roundedSum = 0.0
+    foreach ($item in $work) {
+      $roundedSum += [double]$item.Share
+    }
+
+    $delta = [Math]::Round((1.0 - $roundedSum), 6)
+
+    if ([Math]::Abs($delta) -gt 0 -and $work.Count -gt 0) {
+      $target = $work | Sort-Object -Property Share -Descending | Select-Object -First 1
+      $target.Share = [Math]::Round(([double]$target.Share + $delta), 6)
+    }
+
+    foreach ($item in $work) {
+      [void]$normalized.Add($item)
+    }
+  }
+
+  return @($normalized)
+}
+
+
 function Get-RowDateValue {
   param($row)
 
@@ -622,6 +690,11 @@ $groupedFinal = @(
 )
 
 Write-Host ("📌 Total linhas após reagrupamento: {0}" -f $groupedFinal.Count)
+
+Write-Host "`n== NORMALIZE SHARES BY SERVICEKEY =="
+$groupedFinal = @(Normalize-ShareRowsByServiceKey -Rows @($groupedFinal))
+if ($groupedFinal.Count -eq 0) { throw "Nenhuma linha final após normalização por ServiceKey." }
+Write-Host ("📌 Total linhas após normalização: {0}" -f $groupedFinal.Count)
 
 Write-Host "`n== VALIDATION =="
 $validation = @(

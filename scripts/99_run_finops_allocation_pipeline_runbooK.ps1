@@ -3,16 +3,16 @@ param(
     [string]$PipelineDate = "",
 
     [Parameter(Mandatory = $false)]
-    [string]$StorageAccountName = "",
+    [string]$StorageAccountName = "stpslkmmfinopseusprd",
 
     [Parameter(Mandatory = $false)]
-    [string]$StorageContainerName = "",
+    [string]$StorageContainerName = "finops",
 
     [Parameter(Mandatory = $false)]
-    [string]$StorageSubscriptionId = "",
+    [string]$StorageSubscriptionId = "52d4423b-7ed9-4673-b8e2-fa21cdb83176",
 
     [Parameter(Mandatory = $false)]
-    [string]$StorageResourceGroupName = "",
+    [string]$StorageResourceGroupName = "rg-psl-kmm-finops-eus-prd",
 
     [Parameter(Mandatory = $false)]
     [string]$LogFolderPrefix = "log-execucao",
@@ -24,17 +24,11 @@ param(
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Off
 
-# =========================================================
-# CONFIG FIXA
-# =========================================================
 $AutomationSubscriptionId = "0535039d-8b8e-4ac1-9fce-9f727e8ba2b1"
 $AutomationAccountName    = "nstech-prd-ccoe-aa"
 $AutomationResourceGroup  = "nstech-prd-ccoe-rg"
 $HybridWorkerGroup        = "hwmgkmmfinopseusprd"
 
-# =========================================================
-# CONTEXTO DE EXECUÇÃO / LOG
-# =========================================================
 $RunId = [guid]::NewGuid().ToString("N")
 $ExecutionDate = (Get-Date).ToString("yyyy-MM-dd")
 $ExecutionTime = (Get-Date).ToString("HH-mm-ss")
@@ -62,6 +56,16 @@ function Log {
     catch {
         Write-Host ("[WARN] Falha ao gravar master log: {0}" -f $_.Exception.Message)
     }
+}
+
+function Publish-RunbookFailure {
+    param(
+        [string]$Message
+    )
+
+    Write-Host $Message
+    Write-Output $Message
+    Write-Error $Message
 }
 
 function Add-RunSummary {
@@ -119,9 +123,6 @@ function Save-RunSummaryToDisk {
     Set-Content -Path $SummaryJsonFile -Value $json -Encoding UTF8
 }
 
-# =========================================================
-# AUTH / CONTEXTO
-# =========================================================
 Log -Message "Iniciando pipeline FinOps master."
 if (-not [string]::IsNullOrWhiteSpace($PipelineDate)) {
     Log -Message ("PipelineDate informado ao master: {0}" -f $PipelineDate)
@@ -140,30 +141,15 @@ Set-AzContext -SubscriptionId $AutomationSubscriptionId -ErrorAction Stop | Out-
 $ctx = Get-AzContext -ErrorAction Stop
 Log -Message ("Contexto Azure ativo: SubscriptionId={0} | TenantId={1}" -f $ctx.Subscription.Id, $ctx.Tenant.Id) -Level "SUCCESS"
 
-# =========================================================
-# AUXILIARES
-# =========================================================
 function Validate-Runbook {
-    param(
-        [Parameter(Mandatory = $true)]
-        [string]$Name
-    )
+    param([Parameter(Mandatory = $true)][string]$Name)
 
-    $aa = Get-AzAutomationAccount `
-        -AutomationAccountName $AutomationAccountName `
-        -ResourceGroupName $AutomationResourceGroup `
-        -ErrorAction Stop
-
+    $aa = Get-AzAutomationAccount -AutomationAccountName $AutomationAccountName -ResourceGroupName $AutomationResourceGroup -ErrorAction Stop
     if ($null -eq $aa) {
         throw ("Automation Account '{0}' não encontrado no RG '{1}'." -f $AutomationAccountName, $AutomationResourceGroup)
     }
 
-    $rb = Get-AzAutomationRunbook `
-        -AutomationAccountName $AutomationAccountName `
-        -ResourceGroupName $AutomationResourceGroup `
-        -Name $Name `
-        -ErrorAction Stop
-
+    $rb = Get-AzAutomationRunbook -AutomationAccountName $AutomationAccountName -ResourceGroupName $AutomationResourceGroup -Name $Name -ErrorAction Stop
     if ($null -eq $rb) {
         throw ("Runbook '{0}' não encontrado." -f $Name)
     }
@@ -188,22 +174,15 @@ function Resolve-JobId {
 }
 
 function Get-ChildLogFilePath {
-    param(
-        [string]$RunbookName,
-        [string]$JobId
-    )
-
+    param([string]$RunbookName,[string]$JobId)
     $safeName = ($RunbookName -replace '[^a-zA-Z0-9\-_]', '_')
     return (Join-Path $LogDir ("child_{0}_{1}.log" -f $safeName, $JobId))
 }
 
 function Write-ChildStreams {
     param(
-        [Parameter(Mandatory = $true)]
-        [string]$JobId,
-
-        [Parameter(Mandatory = $true)]
-        [string]$RunbookName
+        [Parameter(Mandatory = $true)][string]$JobId,
+        [Parameter(Mandatory = $true)][string]$RunbookName
     )
 
     $childLogFile = Get-ChildLogFilePath -RunbookName $RunbookName -JobId $JobId
@@ -212,25 +191,14 @@ function Write-ChildStreams {
 
     foreach ($streamType in @("Output", "Error", "Warning", "Verbose", "Progress", "Debug")) {
         try {
-            $items = Get-AzAutomationJobOutput `
-                -AutomationAccountName $AutomationAccountName `
-                -ResourceGroupName $AutomationResourceGroup `
-                -Id $JobId `
-                -Stream $streamType `
-                -ErrorAction SilentlyContinue
+            $items = Get-AzAutomationJobOutput -AutomationAccountName $AutomationAccountName -ResourceGroupName $AutomationResourceGroup -Id $JobId -Stream $streamType -ErrorAction SilentlyContinue
 
             foreach ($item in @($items)) {
                 if ($null -eq $item) { continue }
 
                 $text = ""
                 try {
-                    $record = Get-AzAutomationJobOutputRecord `
-                        -AutomationAccountName $AutomationAccountName `
-                        -ResourceGroupName $AutomationResourceGroup `
-                        -JobId $JobId `
-                        -Id $item.Id `
-                        -ErrorAction SilentlyContinue
-
+                    $record = Get-AzAutomationJobOutputRecord -AutomationAccountName $AutomationAccountName -ResourceGroupName $AutomationResourceGroup -JobId $JobId -Id $item.Id -ErrorAction SilentlyContinue
                     if ($null -ne $record -and $null -ne $record.Value) {
                         $text = ($record.Value | Out-String).Trim()
                     }
@@ -265,19 +233,32 @@ function Write-ChildStreams {
     return $childLogFile
 }
 
-function Test-JobHasErrorStream {
-    param(
-        [string]$JobId
-    )
+function Get-ChildFailureDetail {
+    param([Parameter(Mandatory = $true)][string]$ChildLogFile)
+
+    if ([string]::IsNullOrWhiteSpace($ChildLogFile) -or -not (Test-Path -Path $ChildLogFile)) {
+        return ""
+    }
 
     try {
-        $errors = Get-AzAutomationJobOutput `
-            -AutomationAccountName $AutomationAccountName `
-            -ResourceGroupName $AutomationResourceGroup `
-            -Id $JobId `
-            -Stream Error `
-            -ErrorAction SilentlyContinue
+        $errorLines = Get-Content -Path $ChildLogFile -ErrorAction Stop | Where-Object {
+            $_ -match '^\[Error\]' -or $_ -match '^\[Warning\]' -or $_ -match '^\[Output\]'
+        }
 
+        if (@($errorLines).Count -gt 0) {
+            return ((@($errorLines | Select-Object -First 8)) -join " || ")
+        }
+    }
+    catch {}
+
+    return ""
+}
+
+function Test-JobHasErrorStream {
+    param([string]$JobId)
+
+    try {
+        $errors = Get-AzAutomationJobOutput -AutomationAccountName $AutomationAccountName -ResourceGroupName $AutomationResourceGroup -Id $JobId -Stream Error -ErrorAction SilentlyContinue
         return (@($errors).Count -gt 0)
     }
     catch {
@@ -286,45 +267,22 @@ function Test-JobHasErrorStream {
 }
 
 function Start-ChildRunbook {
-    param(
-        [string]$Name,
-        [string]$RunOn = ""
-    )
+    param([string]$Name,[string]$RunOn = "")
 
     if (-not [string]::IsNullOrWhiteSpace($PipelineDate)) {
         if (-not [string]::IsNullOrWhiteSpace($RunOn)) {
-            return Start-AzAutomationRunbook `
-                -AutomationAccountName $AutomationAccountName `
-                -ResourceGroupName $AutomationResourceGroup `
-                -Name $Name `
-                -Parameters @{ PipelineDate = $PipelineDate } `
-                -RunOn $RunOn `
-                -ErrorAction Stop
+            return Start-AzAutomationRunbook -AutomationAccountName $AutomationAccountName -ResourceGroupName $AutomationResourceGroup -Name $Name -Parameters @{ PipelineDate = $PipelineDate } -RunOn $RunOn -ErrorAction Stop
         }
         else {
-            return Start-AzAutomationRunbook `
-                -AutomationAccountName $AutomationAccountName `
-                -ResourceGroupName $AutomationResourceGroup `
-                -Name $Name `
-                -Parameters @{ PipelineDate = $PipelineDate } `
-                -ErrorAction Stop
+            return Start-AzAutomationRunbook -AutomationAccountName $AutomationAccountName -ResourceGroupName $AutomationResourceGroup -Name $Name -Parameters @{ PipelineDate = $PipelineDate } -ErrorAction Stop
         }
     }
     else {
         if (-not [string]::IsNullOrWhiteSpace($RunOn)) {
-            return Start-AzAutomationRunbook `
-                -AutomationAccountName $AutomationAccountName `
-                -ResourceGroupName $AutomationResourceGroup `
-                -Name $Name `
-                -RunOn $RunOn `
-                -ErrorAction Stop
+            return Start-AzAutomationRunbook -AutomationAccountName $AutomationAccountName -ResourceGroupName $AutomationResourceGroup -Name $Name -RunOn $RunOn -ErrorAction Stop
         }
         else {
-            return Start-AzAutomationRunbook `
-                -AutomationAccountName $AutomationAccountName `
-                -ResourceGroupName $AutomationResourceGroup `
-                -Name $Name `
-                -ErrorAction Stop
+            return Start-AzAutomationRunbook -AutomationAccountName $AutomationAccountName -ResourceGroupName $AutomationResourceGroup -Name $Name -ErrorAction Stop
         }
     }
 }
@@ -341,10 +299,7 @@ function Get-StorageContext {
 
     $storageAccount = $null
     if (-not [string]::IsNullOrWhiteSpace($StorageResourceGroupName)) {
-        $storageAccount = Get-AzStorageAccount `
-            -Name $StorageAccountName `
-            -ResourceGroupName $StorageResourceGroupName `
-            -ErrorAction Stop
+        $storageAccount = Get-AzStorageAccount -Name $StorageAccountName -ResourceGroupName $StorageResourceGroupName -ErrorAction Stop
     }
     else {
         $all = Get-AzStorageAccount -ErrorAction Stop
@@ -374,31 +329,22 @@ function Upload-LogsToBlob {
 
     $files = Get-ChildItem -Path $LogDir -File -ErrorAction Stop
     foreach ($file in @($files)) {
-        Set-AzStorageBlobContent `
-            -Context $storageCtx `
-            -Container $StorageContainerName `
-            -File $file.FullName `
-            -Blob ("{0}/{1}" -f $blobBase, $file.Name) `
-            -Force `
-            -ErrorAction Stop | Out-Null
-
+        Set-AzStorageBlobContent -Context $storageCtx -Container $StorageContainerName -File $file.FullName -Blob ("{0}/{1}" -f $blobBase, $file.Name) -Force -ErrorAction Stop | Out-Null
         Log -Message ("Upload concluído: {0}/{1}" -f $blobBase, $file.Name) -Level "SUCCESS"
     }
 }
 
 function Run-Child {
     param(
-        [Parameter(Mandatory = $true)]
-        [string]$Name,
-
-        [Parameter(Mandatory = $false)]
-        [string]$RunOn = ""
+        [Parameter(Mandatory = $true)][string]$Name,
+        [Parameter(Mandatory = $false)][string]$RunOn = ""
     )
 
     $startedAt = Get-Date
     $jobId = ""
     $status = ""
     $childLogFile = ""
+    $failureDetail = ""
 
     Log -Message ("================ INÍCIO [{0}] ================" -f $Name)
     if (-not [string]::IsNullOrWhiteSpace($RunOn)) {
@@ -423,12 +369,7 @@ function Run-Child {
         while ($true) {
             Start-Sleep -Seconds 10
 
-            $jobStatus = Get-AzAutomationJob `
-                -AutomationAccountName $AutomationAccountName `
-                -ResourceGroupName $AutomationResourceGroup `
-                -Id $jobId `
-                -ErrorAction Stop
-
+            $jobStatus = Get-AzAutomationJob -AutomationAccountName $AutomationAccountName -ResourceGroupName $AutomationResourceGroup -Id $jobId -ErrorAction Stop
             if ($null -eq $jobStatus) {
                 throw ("Status do job {0} não retornado." -f $jobId)
             }
@@ -447,43 +388,32 @@ function Run-Child {
 
         Log -Message ("Runbook {0} finalizado com status {1}. Coletando streams..." -f $Name, $status)
         $childLogFile = Write-ChildStreams -JobId $jobId -RunbookName $Name
+        $failureDetail = Get-ChildFailureDetail -ChildLogFile $childLogFile
 
         if ($status -ne "Completed") {
-            Add-RunSummary `
-                -RunbookName $Name `
-                -JobId $jobId `
-                -Status $status `
-                -StartedAt $startedAt `
-                -EndedAt (Get-Date) `
-                -RunOn $RunOn `
-                -ChildLogFile $childLogFile `
-                -Message ("Runbook finalizou com status {0}" -f $status)
+            $msg = "Runbook falhou. Nome={0} | JobId={1} | Status={2}" -f $Name, $jobId, $status
+            if (-not [string]::IsNullOrWhiteSpace($failureDetail)) {
+                $msg = "{0} | Detalhe={1}" -f $msg, $failureDetail
+            }
+            $msg = "{0} | ChildLog={1}" -f $msg, $childLogFile
 
-            throw ("Runbook {0} falhou com status: {1}" -f $Name, $status)
+            Add-RunSummary -RunbookName $Name -JobId $jobId -Status $status -StartedAt $startedAt -EndedAt (Get-Date) -RunOn $RunOn -ChildLogFile $childLogFile -Message $msg
+            Log -Message $msg -Level "ERROR"
+            Publish-RunbookFailure -Message $msg
+            throw $msg
         }
 
         if (Test-JobHasErrorStream -JobId $jobId) {
-            Log -Message ("Runbook {0} concluiu como Completed, porém há eventos no stream Error. Verifique o child log." -f $Name) -Level "WARN"
-            Add-RunSummary `
-                -RunbookName $Name `
-                -JobId $jobId `
-                -Status "CompletedWithErrorSignals" `
-                -StartedAt $startedAt `
-                -EndedAt (Get-Date) `
-                -RunOn $RunOn `
-                -ChildLogFile $childLogFile `
-                -Message "Completed com sinais no stream Error."
+            $warnMsg = "Runbook {0} concluiu como Completed, porém há eventos no stream Error. JobId={1} | ChildLog={2}" -f $Name, $jobId, $childLogFile
+            if (-not [string]::IsNullOrWhiteSpace($failureDetail)) {
+                $warnMsg = "{0} | Detalhe={1}" -f $warnMsg, $failureDetail
+            }
+
+            Log -Message $warnMsg -Level "WARN"
+            Add-RunSummary -RunbookName $Name -JobId $jobId -Status "CompletedWithErrorSignals" -StartedAt $startedAt -EndedAt (Get-Date) -RunOn $RunOn -ChildLogFile $childLogFile -Message $warnMsg
         }
         else {
-            Add-RunSummary `
-                -RunbookName $Name `
-                -JobId $jobId `
-                -Status "Completed" `
-                -StartedAt $startedAt `
-                -EndedAt (Get-Date) `
-                -RunOn $RunOn `
-                -ChildLogFile $childLogFile `
-                -Message "Execução concluída com sucesso."
+            Add-RunSummary -RunbookName $Name -JobId $jobId -Status "Completed" -StartedAt $startedAt -EndedAt (Get-Date) -RunOn $RunOn -ChildLogFile $childLogFile -Message "Execução concluída com sucesso."
         }
 
         Log -Message ("Runbook {0} concluído com sucesso. Liberando próximo da sequência." -f $Name) -Level "SUCCESS"
@@ -491,31 +421,30 @@ function Run-Child {
     }
     catch {
         if (-not [string]::IsNullOrWhiteSpace($jobId) -and [string]::IsNullOrWhiteSpace($childLogFile)) {
-            try {
-                $childLogFile = Write-ChildStreams -JobId $jobId -RunbookName $Name
-            }
-            catch {}
+            try { $childLogFile = Write-ChildStreams -JobId $jobId -RunbookName $Name } catch {}
         }
 
-        Add-RunSummary `
-            -RunbookName $Name `
-            -JobId $(if ([string]::IsNullOrWhiteSpace($jobId)) { "N/A" } else { $jobId }) `
-            -Status "Exception" `
-            -StartedAt $startedAt `
-            -EndedAt (Get-Date) `
-            -RunOn $RunOn `
-            -ChildLogFile $childLogFile `
-            -Message $_.Exception.Message
+        if ([string]::IsNullOrWhiteSpace($failureDetail) -and -not [string]::IsNullOrWhiteSpace($childLogFile)) {
+            try { $failureDetail = Get-ChildFailureDetail -ChildLogFile $childLogFile } catch {}
+        }
 
-        Log -Message ("ERRO em {0}: {1}" -f $Name, $_.Exception.Message) -Level "ERROR"
+        $finalMsg = "Falha no child. Nome={0} | JobId={1} | Status={2} | Motivo={3}" -f $Name, $(if ([string]::IsNullOrWhiteSpace($jobId)) { "N/A" } else { $jobId }), $(if ([string]::IsNullOrWhiteSpace($status)) { "Exception" } else { $status }), $_.Exception.Message
+        if (-not [string]::IsNullOrWhiteSpace($failureDetail)) {
+            $finalMsg = "{0} | Detalhe={1}" -f $finalMsg, $failureDetail
+        }
+        if (-not [string]::IsNullOrWhiteSpace($childLogFile)) {
+            $finalMsg = "{0} | ChildLog={1}" -f $finalMsg, $childLogFile
+        }
+
+        Add-RunSummary -RunbookName $Name -JobId $(if ([string]::IsNullOrWhiteSpace($jobId)) { "N/A" } else { $jobId }) -Status $(if ([string]::IsNullOrWhiteSpace($status)) { "Exception" } else { $status }) -StartedAt $startedAt -EndedAt (Get-Date) -RunOn $RunOn -ChildLogFile $childLogFile -Message $finalMsg
+
+        Log -Message $finalMsg -Level "ERROR"
+        Publish-RunbookFailure -Message $finalMsg
         Log -Message ("================ FIM [{0}] ================" -f $Name)
-        throw
+        throw $finalMsg
     }
 }
 
-# =========================================================
-# PIPELINE
-# =========================================================
 $Pipeline = @(
     @{ Name = "finops-rateio-01-build-inventory";                                 RunOn = "" },
     @{ Name = "finops-rateio-02-build-fact-cost";                                 RunOn = "" },
@@ -539,8 +468,10 @@ try {
 }
 catch {
     $masterFailed = $true
-    Log -Message ("PIPELINE FALHOU: {0}" -f $_.Exception.Message) -Level "ERROR"
-    throw
+    $masterMsg = "PIPELINE FALHOU. Runbook interrompido. Motivo={0}" -f $_.Exception.Message
+    Log -Message $masterMsg -Level "ERROR"
+    Publish-RunbookFailure -Message $masterMsg
+    throw $masterMsg
 }
 finally {
     try {
