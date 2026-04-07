@@ -1,0 +1,10 @@
+*.csv
+*.log
+*.tmp
+*.bak
+*.zip
+*.7z
+*.local
+/.idea
+/.vscode
+__pycache__/
