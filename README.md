@@ -43,6 +43,16 @@ Este pipeline funciona como um **motor de alocação de custos cloud**, preparad
 
 ---
 
+## 📊 Diagrama
+
+<a href="docs/finops_pipeline_clean.png">
+  <img src="docs/finops_pipeline_clean.png" alt="FinOps Pipeline" width="100%">
+</a>
+
+[Download PNG](docs/finops_pipeline_clean.png)
+
+---
+
 ## 🔄 Fluxo resumido
 
 1. Inventory → ingestão
@@ -106,4 +116,10 @@ finops-allocation-pipeline/
 ├── scripts/
 ├── docs/
 └── config/
+```
 
+---
+
+## 🏁 Conclusão
+
+Pipeline pronto para produção (V0), evoluindo para solução FinOps governada (V1).
